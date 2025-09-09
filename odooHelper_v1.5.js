@@ -318,7 +318,9 @@
 
   // IMPORTANT: override default close to perform full cleanup
   btnClose.addEventListener('click', () => {
-    cleanupOdooHelper();
+    if (confirm('Apakah kamu yakin ingin menutup panel ini? Semua data sementara akan dibersihkan.')) {
+      cleanupOdooHelper();
+    }
   });
 
   // state
