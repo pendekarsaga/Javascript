@@ -1,31 +1,50 @@
-// ----- Odoo Helper v1.5 (patched: offline-first, inject anywhere) -----
-// Paste this whole file into Console on any page (including a blank tab).
+//-----Odoo Helper v1.5-----
+//- Pencarian produk with suggestion list
+//- Buat daftar produk & download ke CSV or Copy to Clipboard
+//- Chosen Fields & Dynamic Fields
+//- Draggable & Resize panel
+//- Minimize & Restore panel
+//- Offline mode (download & save data produk in IndexedDB)
+//- Download data IndexedDB to CSV
+//- Superfast Suggestion list in Offline Mode with tokens multiEntry index, worker-based in-memory search
+//- Fixed Pencarian produk with settings debounce ms & Stop search if keyword empty
+//- add Button gear for UI Offline Control
+//- Close panel with CleanUp (removes listeners, worker, globals, style)
+
 (() => {
   if (window.__odoo_tool_injected_v1_5) { console.log('Odoo Helper: already injected (v1.5)'); return; }
   window.__odoo_tool_injected_v1_5 = true;
 
-  // NOTE: ORIGIN may be empty string when injected on about:blank or non-odoo page.
-  // To enable "online" features (fetch from Odoo), call:
-  // OdooProductHelper.setOdooOrigin('https://your-odoo.example.com')
-  let ORIGIN = (location && location.origin && location.origin !== 'null') ? location.origin : '';
+  const ORIGIN = location.origin;
   const MODEL = 'product.template';
+  const SEARCH_ENDPOINT = `${ORIGIN}/web/dataset/call_kw/${MODEL}/web_search_read`;
+  const GETVIEWS_ENDPOINT = `${ORIGIN}/web/dataset/call_kw/${MODEL}/get_views`;
   const PRESET_KEY = 'odoo_helper_fields_v2';
   const MIN_KEY = 'odoo_helper_minimized_v2';
   const DB_NAME = 'odoo_helper_db_v4';
   const DB_STORE = 'products';
   const DB_VERSION = 3; // bumped to add 'tokens' multiEntry index
 
-  function SEARCH_ENDPOINT() {
-    if (!ORIGIN) return null;
-    return `${ORIGIN.replace(/\/$/, '')}/web/dataset/call_kw/${MODEL}/web_search_read`;
-  }
-  function GETVIEWS_ENDPOINT() {
-    if (!ORIGIN) return null;
-    return `${ORIGIN.replace(/\/$/, '')}/web/dataset/call_kw/${MODEL}/get_views`;
-  }
-  function CALL_KW_ENDPOINT() {
-    if (!ORIGIN) return null;
-    return `${ORIGIN.replace(/\/$/, '')}/web/dataset/call_kw`;
+// ---------- Offline / origin detection helpers ----------
+  // If true, script will not try to call Odoo APIs when current page doesn't look like Odoo.
+  // You can set to false if you always inject on Odoo pages and want online behaviour.
+  const AUTO_OFFLINE_FALLBACK = true;
+
+  // Quick heuristic: treat page as Odoo if path contains "/web"
+  const isOdooPage = (function(){
+    try { return typeof location.pathname === 'string' && location.pathname.indexOf('/web') !== -1; } catch(e) { return false; }
+  })();
+
+  // Derive availableFields map from a sample product object (used when no /get_views available)
+  function deriveAvailableFieldsFromSample(sample) {
+    const map = {};
+    if (!sample || typeof sample !== 'object') return map;
+    Object.keys(sample).forEach(k => {
+      // try to give a nicer label if possible
+      const label = (k === 'default_code') ? 'Kode' : (k === 'name' ? 'Nama' : k);
+      map[k] = { string: String(label) };
+    });
+    return map;
   }
 
   // keep references we will need to remove listeners later
@@ -102,6 +121,7 @@
 
   const btnMin = el('button', { class: 'hdr-btn', title: 'Minimize' }, '▁');
   const btnMax = el('button', { class: 'hdr-btn', title: 'Maximize' }, '⬜');
+  // create Close button but call cleanup (instead of naive remove)
   const btnClose = el('button', { class: 'hdr-btn', title: 'Close' }, '✕');
   const btnGear = el('button', { class: 'hdr-btn', title: 'Settings' }, '⚙');
   const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.5)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
@@ -119,6 +139,12 @@
   refs.resizeHandle = resizeHandle;
   root.appendChild(resizeHandle);
   document.body.appendChild(root);
+
+// visual hint if not Odoo page
+  if (AUTO_OFFLINE_FALLBACK && !isOdooPage) {
+    const hint = el('div', { class: 'odoo-small', style: { marginTop: '6px', color: '#b23' } }, 'Mode offline aktif (ini bukan halaman Odoo). Silakan klik "Load JSON (Restore)" untuk memuat data produk.');
+    right.insertBefore(hint, right.firstChild.nextSibling); // tampilkan di kanan atas area
+  }
 
   // left table area
   const selectedContainer = left.querySelector('#selected-container');
@@ -150,8 +176,7 @@
       el('div', { class: 'setting-field' }, el('label', {}, 'Rebuild Worker'), el('button', { class: 'odoo-btn', onclick: rebuildWorkerFromDB }, 'Build'))
     ),
     el('div', { style: { marginTop: '6px', display: 'flex', alignItems: 'center' } }, el('div', { class: 'odoo-small' }, 'Products in DB: '), el('div', { id: 'db-count' }, '?')),
-    el('div', { id: 'worker-status' }, 'Worker: not ready'),
-    el('div', { style: { marginTop: '6px', fontSize: '12px', color: '#333' } }, el('span', {}, 'Odoo origin: '), el('span', { id: 'odoo-origin-display', style: { fontWeight: 700 } }, ORIGIN || '(not set)'))
+    el('div', { id: 'worker-status' }, 'Worker: not ready')
   );
 
   right.appendChild(searchInput);
@@ -368,35 +393,38 @@
 
   // fetch available fields
   async function fetchAvailableFields() {
-    const endpoint = GETVIEWS_ENDPOINT();
-    if (!endpoint) {
-      // Not running on Odoo origin and user didn't set origin
-      // Provide minimal fallback fields to keep UI usable
-      availableFields = {
-        id: { string: 'ID' },
-        default_code: { string: 'Kode' },
-        name: { string: 'Nama' },
-        barcode: { string: 'Barcode' },
-        list_price: { string: 'Harga' }
-      };
+    // If we are not on an Odoo page and AUTO_OFFLINE_FALLBACK enabled, skip remote calls
+    if (AUTO_OFFLINE_FALLBACK && !isOdooPage) {
+      console.log('Odoo Helper: not on Odoo page — skipping remote fields fetch (offline fallback).');
+      availableFields = {}; // will be populated from JSON / DB sample later if possible
       renderFieldCheckboxes();
       return;
     }
+
     try {
       const payload = { id: 999, jsonrpc: '2.0', method: 'call', params: { model: MODEL, method: 'get_views', args: [], kwargs: { context: { lang: 'id_ID' }, views: [[false,'kanban'],[false,'list'],[false,'form'],[false,'search']], options: {} } } };
-      const r = await fetch(endpoint, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const r = await fetch(GETVIEWS_ENDPOINT, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const j = await r.json();
       const models = j?.result?.models;
       if (models && models[MODEL]) { availableFields = models[MODEL]; renderFieldCheckboxes(); return; }
-    } catch (e) { console.warn('get_views failed', e); }
+    } catch (e) {
+      console.warn('get_views failed (or unreachable)', e);
+    }
+
+    // fallback to fields_get (still network) but wrapped
     try {
-      const endpoint2 = CALL_KW_ENDPOINT();
-      if (!endpoint2) throw new Error('Odoo origin not set');
       const payload2 = { id: 998, jsonrpc: '2.0', method: 'call', params: { model: MODEL, method: 'fields_get', args: [], kwargs: { attributes: ['string','type','help','required','readonly'] } } };
-      const r2 = await fetch(endpoint2, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload2) });
+      const r2 = await fetch(`${ORIGIN}/web/dataset/call_kw`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload2) });
       const j2 = await r2.json();
-      if (j2 && j2.result) { availableFields = j2.result; renderFieldCheckboxes(); }
-    } catch (e) { console.error('fields_get failed', e); }
+      if (j2 && j2.result) { availableFields = j2.result; renderFieldCheckboxes(); return; }
+    } catch (e) {
+      console.warn('fields_get failed (or unreachable)', e);
+    }
+
+    // if we reach here, no remote metadata obtained. Leave availableFields empty;
+    // if we already have products in DB, derive fields from a sample later in init()
+    availableFields = {};
+    renderFieldCheckboxes();
   }
 
   // --- search (debounced) + keyboard nav (use configurable debounce)
@@ -449,15 +477,10 @@
       }
 
       // Online search
-      const endpoint = SEARCH_ENDPOINT();
-      if (!endpoint) {
-        suggestList.innerHTML = 'Online search tidak tersedia — set Odoo origin atau gunakan mode offline.';
-        return;
-      }
       let domain = ["&", ["available_in_pos","=",true]];
       if (q) domain = ["&", ["available_in_pos","=",true], "|", "|", "|", ["default_code","ilike", q], ["product_variant_ids.default_code","ilike", q], ["name","ilike", q], ["barcode","ilike", q]];
       const body = { id: 21, jsonrpc: '2.0', method: 'call', params: { model: MODEL, method: 'web_search_read', args: [], kwargs: { limit, offset: 0, order: '', context: { lang: 'id_ID' }, count_limit: 10001, domain, fields: chosenFields.length ? chosenFields : ['id','default_code','name'] } } };
-      const r = await fetch(endpoint, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(SEARCH_ENDPOINT, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
       suggestions = (j && j.result && (j.result.records || j.result)) ? (j.result.records || j.result) : [];
       activeIndex = -1; renderSuggestions();
@@ -716,11 +739,6 @@
   // Fetch all data from server (batch)
   async function startFetchAll() {
     if (fetchController.running) { alert('Proses pengambilan sedang berjalan'); return; }
-    const endpoint = CALL_KW_ENDPOINT();
-    if (!endpoint) {
-      alert('Fitur Ambil Data Produk (online) tidak tersedia — set Odoo origin dulu dengan OdooProductHelper.setOdooOrigin("https://your-odoo") atau inject di halaman Odoo.');
-      return;
-    }
     const batchSizeEl = document.getElementById('batch-size');
     const limit = parseInt(batchSizeEl.value) || 200;
     fetchController.limit = limit; fetchController.stopRequested = false; fetchController.running = true; fetchController.offset = 0;
@@ -774,11 +792,9 @@
   }
 
   async function fetchSearchCount() {
-    const endpoint = CALL_KW_ENDPOINT();
-    if (!endpoint) { console.warn('fetchSearchCount: Odoo origin not set'); return 0; }
     try {
       const payload = { id: 1, jsonrpc: '2.0', method: 'call', params: { model: MODEL, method: 'search_count', args: [], kwargs: { domain: [], context: { lang: 'id_ID' } } } };
-      const r = await fetch(endpoint, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const r = await fetch('/web/dataset/call_kw', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const j = await r.json();
       const v = j && j.result;
       return (typeof v === 'number') ? v : (j && j.result && j.result.length) || 0;
@@ -786,11 +802,9 @@
   }
 
   async function fetchChunk(offset, limit) {
-    const endpoint = SEARCH_ENDPOINT();
-    if (!endpoint) { console.warn('fetchChunk: Odoo origin not set'); return []; }
     try {
       const body = { id: 2, jsonrpc: '2.0', method: 'call', params: { model: MODEL, method: 'web_search_read', args: [], kwargs: { fields: chosenFields.length ? chosenFields : ['id','default_code','name','barcode','list_price'], limit, offset, domain: [], context: { lang: 'id_ID' } } } };
-      const r = await fetch(endpoint, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(SEARCH_ENDPOINT, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!j) return [];
       if (j.result && j.result.records) return j.result.records;
@@ -896,6 +910,16 @@
       await saveProductsBatchWithProgress(arr2, (progressPct, doneCount, total) => {
         barEl.style.width = `${progressPct}%`; log(`Restore JSON: ${doneCount}/${total} (${Math.floor(progressPct)}%)`);
       });
+
+      // if we don't have server metadata fields, derive a set from this JSON sample
+      if ((!availableFields || Object.keys(availableFields).length === 0) && arr2 && arr2.length) {
+        try {
+          availableFields = deriveAvailableFieldsFromSample(arr2[0]);
+          renderFieldCheckboxes();
+          console.log('Odoo Helper: availableFields derived from loaded JSON sample');
+        } catch(e){ console.warn('derive fields after JSON load failed', e); }
+      }
+
       alert('Restore JSON selesai');
       const cnt = await getProductsCount(); document.getElementById('search-count').textContent = `SEARCH_COUNT: ${cnt}`; document.getElementById('db-count').textContent = cnt;
       if (searchCache) { arr2.forEach(p => { searchCache.push(p); }); }
@@ -1067,54 +1091,57 @@
       if (window.innerWidth < 900) { root.style.left = '8px'; root.style.right = 'auto'; root.style.top = '60px'; root.style.width = Math.min(window.innerWidth - 16, 720) + 'px'; root.style.height = Math.min(window.innerHeight - 120, 520) + 'px'; }
       else { root.style.left = `${Math.max(8, rect.left)}px`; root.style.top = `${Math.max(8, rect.top)}px`; }
     }
+
+    // If not Odoo page, auto-check offline mode and show hint in worker-status
+    if (AUTO_OFFLINE_FALLBACK && !isOdooPage) {
+      try { document.getElementById('offline-mode').checked = true; } catch(e){}
+      document.getElementById('worker-status').textContent = 'Offline-only (no Odoo API) — load JSON jika perlu';
+      console.log('Odoo Helper: running in offline-only fallback mode');
+    }
+
+    // try to get fields (may be skipped if offline)
     await fetchAvailableFields();
+
+    // get server count only if we are on Odoo page (avoid false network calls)
+    let sc = 0;
+    if (!AUTO_OFFLINE_FALLBACK || isOdooPage) {
+      try {
+        sc = await fetchSearchCount();
+        document.getElementById('search-count').textContent = `SEARCH_COUNT: ${sc}`;
+      } catch(e) { console.warn('fetchSearchCount failed', e); }
+    }
+
+    // check local DB: if it contains data, build worker; if availableFields empty, derive from a sample
     try {
-      const sc = await fetchSearchCount();
-      document.getElementById('search-count').textContent = `SEARCH_COUNT: ${sc}`;
-    } catch(e) {}
-    try { const count = await getProductsCount(); document.getElementById('db-count').textContent = count; if (count && count > 0) { // build worker in background
+      const count = await getProductsCount();
+      document.getElementById('db-count').textContent = count;
+      if (count && count > 0) {
+        // derive fields from a sample if server metadata not present
+        if ((!availableFields || Object.keys(availableFields).length === 0)) {
+          try {
+            const all = await getAllProductsGenerator();
+            if (all && all.length) {
+              availableFields = deriveAvailableFieldsFromSample(all[0]);
+              renderFieldCheckboxes();
+              console.log('Odoo Helper: derived availableFields from local DB sample');
+            }
+          } catch(e) { console.warn('derive availableFields from DB failed', e); }
+        }
+        // build worker
         rebuildWorkerFromDB();
-      } } catch(e){}
-    // If ORIGIN not set -> default to offline mode checked
-    try {
-      const offEl = document.getElementById('offline-mode');
-      if (offEl) offEl.checked = (!ORIGIN);
-      const odEl = document.getElementById('odoo-origin-display');
-      if (odEl) odEl.textContent = ORIGIN || '(not set)';
+      } else {
+        // No local DB content; encourage user to load JSON if not on Odoo
+        if (AUTO_OFFLINE_FALLBACK && !isOdooPage) {
+          log('Tidak ada data lokal. Tekan "Load JSON (Restore)" untuk memuat backup JSON dan menjalankan mode offline penuh.');
+        }
+      }
     } catch(e){}
   })();
 
   // JSON load helper: expose minimal API
-  window.OdooProductHelper = {
-    addSelected,
-    doSearch,
-    getSuggestions: () => suggestions,
-    getSelected: () => selected,
-    setChosenFields: (arr) => { if (Array.isArray(arr)) { chosenFields = arr; renderFieldCheckboxes(); renderSuggestions(); renderSelectedTable(); } },
-    openDB,
-    saveProductsBatch,
-    getProductsCount,
-    rebuildWorkerFromDB,
-    // NEW: allow user to set origin (enables online features)
-    setOdooOrigin: (url) => {
-      try {
-        if (!url) { ORIGIN = ''; document.getElementById('odoo-origin-display').textContent = '(not set)'; alert('Odoo origin dibersihkan. Mode online nonaktif.'); return; }
-        // simple normalization
-        const normalized = String(url).replace(/\\/g, '/').replace(/\/+$/, '');
-        ORIGIN = normalized;
-        document.getElementById('odoo-origin-display').textContent = ORIGIN;
-        alert('Odoo origin diset ke: ' + ORIGIN + '\nFitur online sekarang bisa dipakai di: ' + ORIGIN);
-      } catch (e) {
-        console.error(e);
-        alert('Gagal set origin');
-      }
-      // try to refresh available fields when set
-      fetchAvailableFields();
-    },
-    getOdooOrigin: () => ORIGIN
-  };
+  window.OdooProductHelper = { addSelected, doSearch, getSuggestions: () => suggestions, getSelected: () => selected, setChosenFields: (arr) => { if (Array.isArray(arr)) { chosenFields = arr; renderFieldCheckboxes(); renderSuggestions(); renderSelectedTable(); } }, openDB, saveProductsBatch, getProductsCount, rebuildWorkerFromDB };
 
-  console.log('Odoo Helper injected (v1.5) - patched for offline-first and inject-anywhere. Use OdooProductHelper.setOdooOrigin(url) to enable online features.');
+  console.log('Odoo Helper injected (v1.5) - tokens index + worker search + settings UI added.');
 
   // -----------------------
   // CLEANUP: remove DOM, listeners, worker, global variables
@@ -1183,4 +1210,5 @@
 
   // expose cleanup on window too, so user can call manually if needed
   try { window.cleanupOdooHelper = cleanupOdooHelper; } catch(e){}
+
 })();
