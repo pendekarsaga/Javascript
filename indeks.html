@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Odoo Helper — Local Tool</title>
+  <style>
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      max-width: 900px;
+      margin: 18px auto;
+      padding: 12px;
+    }
+    .box {
+      border: 1px dashed #aaa;
+      padding: 18px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    input[type="file"] { display: none; }
+    button {
+      padding: 8px 12px;
+      margin: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    pre {
+      background: #f6f6f6;
+      padding: 10px;
+      border-radius: 6px;
+      max-height: 240px;
+      overflow: auto;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <h1>Odoo Helper — Local Tool</h1>
+
+  <p>Gunakan halaman ini untuk <b>memuat (load)</b> file JSON hasil export dari Odoo Helper dan langsung memasukkannya ke IndexedDB.</p>
+
+  <div class="box" id="dropzone">
+    <p>Drag &amp; Drop JSON di sini<br/>atau</p>
+    <label style="cursor:pointer">
+      <input id="fileInput" type="file" accept=".json,application/json"/>
+      <button id="chooseBtn">Pilih file JSON...</button>
+    </label>
+    <div style="margin-top:8px">
+      <button id="loadBtn" disabled>Load JSON ke Odoo Helper</button>
+      <button id="downloadBtn" disabled>Download preview JSON</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+  <h3>Status</h3>
+  <div id="status">Belum ada file dimuat.</div>
+
+  <h3>Preview JSON (potongan)</h3>
+  <pre id="preview">-</pre>
+
+  <!-- Script utama -->
+  <script src="odooHelper_v1.5.js"></script>
+  <!-- Loader untuk tool lokal -->
+  <script src="loader.js"></script>
+</body>
+</html>
