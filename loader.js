@@ -44,7 +44,7 @@
   async function sendToHelper(jsonObj) {
     setStatus('Mengirim data ke Odoo Helper...');
 
-    // Gunakan API dari odooHelper_v1.5.js
+    // Gunakan API dari odooHelper
     if (window.OdooProductHelper && typeof window.OdooProductHelper.saveProductsBatch === 'function') {
       try {
         await window.OdooProductHelper.saveProductsBatch(jsonObj);
