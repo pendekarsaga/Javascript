@@ -1,4 +1,4 @@
-//-----Odoo Helper v1.5-----
+//-----Odoo Helper v1.6-----
 //- Pencarian produk with suggestion list
 //- Buat daftar produk & download ke CSV or Copy to Clipboard
 //- Chosen Fields & Dynamic Fields
@@ -10,10 +10,11 @@
 //- Fixed Pencarian produk with settings debounce ms & Stop search if keyword empty
 //- add Button gear for UI Offline Control
 //- Close panel with CleanUp (removes listeners, worker, globals, style)
+//- Full Offline with Html + Loader.js + data JSON
 
 (() => {
-  if (window.__odoo_tool_injected_v1_5) { console.log('Odoo Helper: already injected (v1.5)'); return; }
-  window.__odoo_tool_injected_v1_5 = true;
+  if (window.__odoo_tool_injected_v1_6) { console.log('Odoo Helper: already injected (v1.6)'); return; }
+  window.__odoo_tool_injected_v1_6 = true;
 
   const ORIGIN = location.origin;
   const MODEL = 'product.template';
@@ -28,7 +29,7 @@
   // keep references we will need to remove listeners later
   const refs = {};
   const handlers = {}; // store handler function refs to remove later
-  const styleId = 'odoo-helper-style-v1-5';
+  const styleId = 'odoo-helper-style-v1-6';
 
   // small helper
   const el = (tag, attrs = {}, ...children) => {
@@ -102,7 +103,7 @@
   // create Close button but call cleanup (instead of naive remove)
   const btnClose = el('button', { class: 'hdr-btn', title: 'Close' }, '✕');
   const btnGear = el('button', { class: 'hdr-btn', title: 'Settings' }, '⚙');
-  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.5)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
+  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.6)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
   refs.hdr = hdr;
   root.appendChild(hdr);
 
@@ -1047,7 +1048,7 @@
   // JSON load helper: expose minimal API
   window.OdooProductHelper = { addSelected, doSearch, getSuggestions: () => suggestions, getSelected: () => selected, setChosenFields: (arr) => { if (Array.isArray(arr)) { chosenFields = arr; renderFieldCheckboxes(); renderSuggestions(); renderSelectedTable(); } }, openDB, saveProductsBatch, getProductsCount, rebuildWorkerFromDB };
 
-  console.log('Odoo Helper injected (v1.5) - tokens index + worker search + settings UI added.');
+  console.log('Odoo Helper injected (v1.6) - tokens index + worker search + settings UI added.');
 
   // -----------------------
   // CLEANUP: remove DOM, listeners, worker, global variables
@@ -1106,7 +1107,7 @@
       try { delete window.OdooProductHelper; } catch(e){ window.OdooProductHelper = undefined; }
 
       // remove injected flag
-      try { delete window.__odoo_tool_injected_v1_5; } catch(e){ window.__odoo_tool_injected_v1_5 = false; }
+      try { delete window.__odoo_tool_injected_v1_6; } catch(e){ window.__odoo_tool_injected_v1_6 = false; }
 
       console.log('Odoo Helper: cleaned up and removed.');
     } catch (err) {
@@ -1118,3 +1119,39 @@
   try { window.cleanupOdooHelper = cleanupOdooHelper; } catch(e){}
 
 })();
+
+// --- PATCH START ---
+(function() {
+  window.OdooHelper = window.OdooHelper || {};
+
+  // API publik untuk load JSON dari tool lokal
+  window.OdooHelper.load = async function(json) {
+    try {
+      if (typeof restoreFromJSON === 'function') {
+        await restoreFromJSON(json);
+        console.log('[OdooHelper] JSON berhasil dimuat via API publik');
+      } else {
+        console.warn('[OdooHelper] restoreFromJSON tidak ditemukan!');
+      }
+    } catch (e) {
+      console.error('[OdooHelper] Gagal load JSON:', e);
+    }
+  };
+
+  // Listener event dari tool lokal
+  window.addEventListener('odoo-helper-load', async () => {
+    try {
+      const raw = localStorage.getItem('odoo_helper_data');
+      if (!raw) {
+        console.warn('[OdooHelper] Tidak ada data di localStorage (odoo_helper_data).');
+        return;
+      }
+      const data = JSON.parse(raw);
+      await window.OdooHelper.load(data);
+      console.log('[OdooHelper] Data dipulihkan dari localStorage (via event odoo-helper-load).');
+    } catch (err) {
+      console.error('[OdooHelper] Gagal memulihkan data dari event:', err);
+    }
+  });
+})();
+// --- PATCH END ---
