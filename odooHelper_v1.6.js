@@ -1,4 +1,4 @@
-//-----Odoo Helper v1.6-----
+//-----Odoo Helper v1.7-----
 //- Pencarian produk with suggestion list
 //- Buat daftar produk & download ke CSV or Copy to Clipboard
 //- Chosen Fields & Dynamic Fields
@@ -9,12 +9,12 @@
 //- Superfast Suggestion list in Offline Mode with tokens multiEntry index, worker-based in-memory search
 //- Fixed Pencarian produk with settings debounce ms & Stop search if keyword empty
 //- add Button gear for UI Offline Control
-//- Close panel with CleanUp (removes listeners, worker, globals, style)
+//- Close panel with selective cleanup
 //- Full Offline with Html + Loader.js + data JSON
 
 (() => {
-  if (window.__odoo_tool_injected_v1_6) { console.log('Odoo Helper: already injected (v1.6)'); return; }
-  window.__odoo_tool_injected_v1_6 = true;
+  if (window.__odoo_tool_injected_v1_7) { console.log('Odoo Helper: already injected (v1.7)'); return; }
+  window.__odoo_tool_injected_v1_7 = true;
 
   const ORIGIN = location.origin;
   const MODEL = 'product.template';
@@ -29,7 +29,7 @@
   // keep references we will need to remove listeners later
   const refs = {};
   const handlers = {}; // store handler function refs to remove later
-  const styleId = 'odoo-helper-style-v1-6';
+  const styleId = 'odoo-helper-style-v1-7';
 
   // small helper
   const el = (tag, attrs = {}, ...children) => {
@@ -103,7 +103,7 @@
   // create Close button but call cleanup (instead of naive remove)
   const btnClose = el('button', { class: 'hdr-btn', title: 'Close' }, '✕');
   const btnGear = el('button', { class: 'hdr-btn', title: 'Settings' }, '⚙');
-  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.6)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
+  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.7)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
   refs.hdr = hdr;
   root.appendChild(hdr);
 
@@ -317,11 +317,155 @@
   btnMax.addEventListener('click', toggleMaximize);
   btnGear.addEventListener('click', toggleSettings);
 
-  // IMPORTANT: override default close to perform full cleanup
-  btnClose.addEventListener('click', () => {
-    if (confirm('Apakah kamu yakin ingin menutup panel ini? Semua data sementara akan dibersihkan.')) {
-      cleanupOdooHelper();
+  // --- selective cleanup modal ---
+function clearIndexedDBWithoutConfirm() {
+  // Clear the IndexedDB store without prompting (used when user checks 'Hapus IndexedDB')
+  try {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onsuccess = (ev) => {
+      const db = ev.target.result;
+      const tx = db.transaction([DB_STORE], 'readwrite');
+      tx.objectStore(DB_STORE).clear();
+      tx.oncomplete = () => { try { db.close(); document.getElementById('db-count') && (document.getElementById('db-count').textContent = '0'); } catch(e){}; };
+      tx.onerror = () => { try { db.close(); } catch(e){}; };
+    };
+    req.onerror = ()=>{};
+  } catch(e){ console.warn('clearIndexedDBWithoutConfirm failed', e); }
+}
+
+function selectiveCleanup(options = {}) {
+  // options: { ui, listeners, worker, caches, api, fileInput, fetchController, indexedDB, injectedFlag }
+  try {
+    if (options.fetchController) {
+      try { fetchController.stopRequested = true; fetchController.running = false; } catch(e) {}
     }
+
+    if (options.worker) {
+      try { if (worker) { worker.terminate(); worker = null; } } catch(e){}
+    }
+
+    if (options.listeners) {
+      try {
+        if (handlers.dragStart && refs.hdr) refs.hdr.removeEventListener('pointerdown', handlers.dragStart);
+        if (handlers.dragMove) window.removeEventListener('pointermove', handlers.dragMove);
+        if (handlers.dragEnd) window.removeEventListener('pointerup', handlers.dragEnd);
+        if (handlers.dragStart && refs.hdr) refs.hdr.removeEventListener('touchstart', handlers.dragStart);
+        if (handlers.dragMove) window.removeEventListener('touchmove', handlers.dragMove);
+        if (handlers.dragEnd) window.removeEventListener('touchend', handlers.dragEnd);
+
+        if (handlers.resizeStart && refs.resizeHandle) refs.resizeHandle.removeEventListener('pointerdown', handlers.resizeStart);
+        if (handlers.resizeMove) window.removeEventListener('pointermove', handlers.resizeMove);
+        if (handlers.resizeEnd) window.removeEventListener('pointerup', handlers.resizeEnd);
+        if (handlers.resizeStart && refs.resizeHandle) refs.resizeHandle.removeEventListener('touchstart', handlers.resizeStart);
+        if (handlers.resizeMove) window.removeEventListener('touchmove', handlers.resizeMove);
+        if (handlers.resizeEnd) window.removeEventListener('touchend', handlers.resizeEnd);
+      } catch(e){}
+    }
+
+    if (options.ui) {
+      try { if (refs.root && refs.root.parentNode) refs.root.parentNode.removeChild(refs.root); } catch(e){}
+      try { const s = document.getElementById(styleId); if (s && s.parentNode) s.parentNode.removeChild(s); } catch(e){}
+    }
+
+    if (options.fileInput) {
+      try { if (refs.fileInput && refs.fileInput.parentNode) refs.fileInput.parentNode.removeChild(refs.fileInput); } catch(e){}
+    }
+
+    if (options.caches) {
+      try {
+        availableFields = null;
+        chosenFields = null;
+        suggestions = null;
+        selected = null;
+        searchCache = null;
+        cacheBuilding = false;
+        workerReady = false;
+        workerBuilding = false;
+        // do not mutate fetchController here unless requested
+      } catch(e){}
+    }
+
+    if (options.api) {
+      try { delete window.OdooProductHelper; } catch(e){ window.OdooProductHelper = undefined; }
+    }
+
+    if (options.injectedFlag) {
+      try { delete window.__odoo_tool_injected_v1_7; } catch(e){ window.__odoo_tool_injected_v1_7 = false; }
+    }
+
+    if (options.indexedDB) {
+      clearIndexedDBWithoutConfirm();
+    }
+
+    console.log('Odoo Helper: selective cleanup done', options);
+  } catch (err) {
+    console.error('selectiveCleanup error', err);
+  }
+}
+
+  btnClose.addEventListener('click', () => {
+  // build modal inside root (so it inherits z-index)
+  const modalWrap = el('div', { style: { position: 'fixed', left: '0', top: '0', right: '0', bottom: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.32)', zIndex: 2147483650 } });
+  const modal = el('div', { style: { width: '420px', maxWidth: '94%', background: '#fff', borderRadius: '8px', padding: '12px', boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' } });
+  modalWrap.appendChild(modal);
+
+  modal.appendChild(el('div', { style: { fontWeight: 700, marginBottom: '8px' } }, 'Tutup Odoo Helper — Pilih data yang ingin dihapus'));
+  const opts = [
+  { id: 'opt-ui', label: 'Hapus Tampilan Panel (UI & Style)', key: 'ui', checked: true, desc: 'Menghapus jendela panel Odoo Helper beserta tampilan gayanya.' },
+  { id: 'opt-listeners', label: 'Hapus Pengendali Gerakan (Drag & Resize)', key: 'listeners', checked: true, desc: 'Menghentikan fungsi seret dan ubah ukuran panel.' },
+  { id: 'opt-worker', label: 'Hentikan Proses Latar (Worker)', key: 'worker', checked: true, desc: 'Mematikan proses latar belakang agar tidak memakai memori/CPU.' },
+  { id: 'opt-caches', label: 'Bersihkan Data Sementara (Cache & Variabel)', key: 'caches', checked: true, desc: 'Mengosongkan data pencarian, saran, dan pilihan produk.' },
+  { id: 'opt-api', label: 'Hapus Akses Cepat (API Publik)', key: 'api', checked: true, desc: 'Menghapus pintasan window.OdooProductHelper dari browser.' },
+  { id: 'opt-file', label: 'Hapus Input File Tersembunyi', key: 'fileInput', checked: true, desc: 'Menghapus input file yang digunakan untuk impor data.' },
+  { id: 'opt-fetch', label: 'Hentikan Proses Pengambilan Data', key: 'fetchController', checked: true, desc: 'Menghentikan proses pengambilan produk yang sedang berjalan.' },
+  { id: 'opt-indexed', label: 'Hapus Data Offline (IndexedDB) — Hati-hati!', key: 'indexedDB', checked: false, desc: 'Menghapus seluruh data produk yang tersimpan offline di browser.' },
+  { id: 'opt-flag', label: 'Hapus Penanda Script (Injected Flag)', key: 'injectedFlag', checked: true, desc: 'Menghapus tanda bahwa script ini sudah aktif, agar bisa diaktifkan lagi.' }
+  ];
+  const list = el('div', { style: { maxHeight: '260px', overflow: 'auto', marginBottom: '10px' } });
+  opts.forEach(o => {
+  const cb = el('input', { type: 'checkbox', id: o.id, checked: !!o.checked });
+  const labelWrap = el('div', { style: { marginBottom: '10px' } });
+  const title = el('label', { style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: '600' } },
+    cb,
+    el('span', {}, o.label)
+  );
+  const desc = el('div', { style: { marginLeft: '26px', fontSize: '12px', color: '#555' } }, o.desc);
+  labelWrap.appendChild(title);
+  labelWrap.appendChild(desc);
+  list.appendChild(labelWrap);
+  });
+  modal.appendChild(list);
+
+  const footer = el('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } });
+  const btnCancel = el('button', { class: 'odoo-btn' }, 'Batal');
+  const btnConfirm = el('button', { class: 'odoo-btn primary' }, 'Hapus terpilih & Tutup');
+  footer.appendChild(btnCancel);
+  footer.appendChild(btnConfirm);
+  modal.appendChild(footer);
+
+  // attach to body (or root) and focus
+  document.body.appendChild(modalWrap);
+
+  btnCancel.addEventListener('click', () => { try { modalWrap.remove(); } catch(e){} }, { once: true });
+  btnConfirm.addEventListener('click', () => {
+    // build options object from checkboxes
+    const optionsObj = {};
+    opts.forEach(o => {
+      const elcb = document.getElementById(o.id);
+      optionsObj[o.key] = !!(elcb && elcb.checked);
+    });
+
+    // run selective cleanup
+    selectiveCleanup(optionsObj);
+
+    // if UI removal was selected, we already removed refs.root; but still safe to call cleanupOdooHelper if user selected everything
+    if (optionsObj.ui && optionsObj.listeners && optionsObj.worker && optionsObj.caches && optionsObj.api && optionsObj.fileInput && optionsObj.fetchController && optionsObj.injectedFlag && !optionsObj.indexedDB) {
+      // all standard cleanup except indexedDB -> call full cleanup to be safe (existing function)
+      try { cleanupOdooHelper(); } catch(e){}
+    }
+
+    try { modalWrap.remove(); } catch(e){}
+  }, { once: true });
   });
 
   // state
@@ -1048,7 +1192,7 @@
   // JSON load helper: expose minimal API
   window.OdooProductHelper = { addSelected, doSearch, getSuggestions: () => suggestions, getSelected: () => selected, setChosenFields: (arr) => { if (Array.isArray(arr)) { chosenFields = arr; renderFieldCheckboxes(); renderSuggestions(); renderSelectedTable(); } }, openDB, saveProductsBatch, getProductsCount, rebuildWorkerFromDB };
 
-  console.log('Odoo Helper injected (v1.6) - tokens index + worker search + settings UI added.');
+  console.log('Odoo Helper injected (v1.7) - tokens index + worker search + settings UI added.');
 
   // -----------------------
   // CLEANUP: remove DOM, listeners, worker, global variables
@@ -1107,7 +1251,7 @@
       try { delete window.OdooProductHelper; } catch(e){ window.OdooProductHelper = undefined; }
 
       // remove injected flag
-      try { delete window.__odoo_tool_injected_v1_6; } catch(e){ window.__odoo_tool_injected_v1_6 = false; }
+      try { delete window.__odoo_tool_injected_v1_7; } catch(e){ window.__odoo_tool_injected_v1_7 = false; }
 
       console.log('Odoo Helper: cleaned up and removed.');
     } catch (err) {
