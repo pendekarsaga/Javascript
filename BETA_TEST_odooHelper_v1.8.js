@@ -172,8 +172,7 @@
       el('div', { class: 'setting-field' }, el('label', {}, 'Rebuild Worker'), el('button', { class: 'odoo-btn', onclick: rebuildWorkerFromDB }, 'Build'))
     ),
     el('div', { style: { marginTop: '6px', display: 'flex', alignItems: 'center' } }, el('div', { class: 'odoo-small' }, 'Products in DB: '), el('div', { id: 'db-count' }, '?')),
-    el('div', { id: 'worker-status' }, 'Worker: not ready')
-
+    el('div', { id: 'worker-status' }, 'Worker: not ready'),
     el('div', { style: { marginTop: '10px', borderTop: '1px dashed #eee', paddingTop: '8px' } },
       el('div', { class: 'odoo-small' }, 'Header Manager:'),
       el('div', { id: 'header-manager-list', style: { maxHeight: '160px', overflow: 'auto', marginTop: '6px' } }),
