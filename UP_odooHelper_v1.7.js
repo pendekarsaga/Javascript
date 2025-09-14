@@ -566,7 +566,7 @@ function selectiveCleanup(options = {}) {
     { key: 'default_code', label: 'Default Code', type: 'text', fixed: true },
     { key: 'name', label: 'Nama', type: 'text', fixed: true }
   ];
-  const chosenCols = (typeof chosenFields !== 'undefined' && chosenFields && chosenFields.length) ? chosenFields.map(f => ({ key: f, label: (availableFields[f]?.string || f), type: 'text', fixed: false })) : [];
+  const chosenCols = (chosenFields && chosenFields.length) ? chosenFields.map(f => ({ key: f, label: (availableFields[f]?.string || f), type: 'text', fixed: false })) : [];
   const tail = [
     { key: 'qty', label: 'Qty', type: 'number', fixed: false },
     { key: 'keterangan', label: 'Keterangan', type: 'text', fixed: false }
