@@ -1,4 +1,4 @@
-//-----Odoo Helper v1.7-----
+//-----Odoo Helper v1.8-----
 //- Pencarian produk with suggestion list
 //- Buat daftar produk & download ke CSV or Copy to Clipboard
 //- Chosen Fields & Dynamic Fields
@@ -11,10 +11,11 @@
 //- add Button gear for UI Offline Control
 //- Close panel with selective cleanup
 //- Full Offline with Html + Loader.js + data JSON
+//- Dynamic Header in daftar produk terpilih + Save, Load and Reset Format Header
 
 (() => {
-  if (window.__odoo_tool_injected_v1_7) { console.log('Odoo Helper: already injected (v1.7)'); return; }
-  window.__odoo_tool_injected_v1_7 = true;
+  if (window.__odoo_tool_injected_v1_8) { console.log('Odoo Helper: already injected (v1.8)'); return; }
+  window.__odoo_tool_injected_v1_8 = true;
 
   const ORIGIN = location.origin;
   const MODEL = 'product.template';
@@ -29,7 +30,7 @@
   // keep references we will need to remove listeners later
   const refs = {};
   const handlers = {}; // store handler function refs to remove later
-  const styleId = 'odoo-helper-style-v1-7';
+  const styleId = 'odoo-helper-style-v1-8';
 
   // small helper
   const el = (tag, attrs = {}, ...children) => {
@@ -103,7 +104,7 @@
   // create Close button but call cleanup (instead of naive remove)
   const btnClose = el('button', { class: 'hdr-btn', title: 'Close' }, '✕');
   const btnGear = el('button', { class: 'hdr-btn', title: 'Settings' }, '⚙');
-  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.7)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
+  const hdr = el('div', { class: 'hdr', tabindex: 0 }, el('div', { class: 'title' }, 'Odoo Helper (v1.8)'), el('div', {}, btnGear, btnMin, btnMax, btnClose));
   refs.hdr = hdr;
   root.appendChild(hdr);
 
@@ -155,6 +156,86 @@
   right.appendChild(searchInput);
   right.appendChild(suggestList);
   right.appendChild(settingsBox);
+  // --- Header Manager UI (dynamic export columns)
+  const headerManagerWrap = el('div', { id: 'header-manager', style: { marginTop: '10px', borderTop: '1px dashed #eee', paddingTop: '8px' } },
+  el('div', { class: 'odoo-small' }, 'Pengaturan Header Export:'),
+  el('div', { style: { marginTop: '6px', display: 'flex', gap: '6px' } },
+    el('button', { class: 'odoo-btn', id: 'btn-add-header' }, 'Tambah Header'),
+    el('button', { class: 'odoo-btn', id: 'btn-save-header' }, 'Save Format'),
+    el('button', { class: 'odoo-btn', id: 'btn-reset-header' }, 'Reset Format')
+  ),
+  el('div', { id: 'header-list', style: { marginTop: '8px', maxHeight: '180px', overflow: 'auto' } })
+  );
+  settingsBox.appendChild(headerManagerWrap);
+
+  // helper: create row in header list
+  function createHeaderRowConfig(item, index) {
+  const row = el('div', { class: 'header-row', draggable: true, 'data-index': index, style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '6px', border: '1px solid #f1f1f1', marginBottom: '6px' } },
+    el('span', { class: 'drag-handle', title: 'Seret untuk urutkan', style: { cursor: 'grab', padding: '6px' } }, '⇅'),
+    el('input', { type: 'text', value: item.label || item.key, style: { flex: '1' } }),
+    el('select', {}, el('option', { value: 'text', selected: item.type==='text' }, 'text'), el('option', { value: 'number', selected: item.type==='number' }, 'number')),
+    el('button', { class: 'odoo-btn', title: 'Up' }, '↑'),
+    el('button', { class: 'odoo-btn', title: 'Down' }, '↓'),
+    el('button', { class: 'odoo-btn', title: 'Hapus' }, 'Hapus')
+  );
+  const input = row.querySelector('input');
+  const sel = row.querySelector('select');
+  const btns = row.querySelectorAll('button');
+  input.addEventListener('change', (e)=>{ headersConfig[index].label = e.target.value || item.key; });
+  sel.addEventListener('change', (e)=>{ headersConfig[index].type = e.target.value; });
+
+  // Up / Down fallback
+  btns[0].addEventListener('click', (ev)=>{ // Up
+    if (index <= 0) return;
+    const m = headersConfig.splice(index,1)[0];
+    headersConfig.splice(index-1,0,m);
+    renderHeadersSettingsUI();
+    renderSelectedTable();
+  });
+  btns[1].addEventListener('click', (ev)=>{ // Down
+    if (index >= headersConfig.length-1) return;
+    const m = headersConfig.splice(index,1)[0];
+    headersConfig.splice(index+1,0,m);
+    renderHeadersSettingsUI();
+    renderSelectedTable();
+  });
+  btns[2].addEventListener('click', (ev)=>{ // Hapus
+    if (item.fixed) { alert('Header ini tidak bisa dihapus'); return; }
+    headersConfig = headersConfig.filter((h,ii)=> ii !== index);
+    renderHeadersSettingsUI();
+    renderSelectedTable();
+  });
+
+  // drag handlers
+  row.addEventListener('dragstart', (ev)=>{ ev.dataTransfer.setData('text/plain', String(index)); });
+  row.addEventListener('dragover', (ev)=>{ ev.preventDefault(); });
+  row.addEventListener('drop', (ev)=>{ ev.preventDefault(); try { const from = parseInt(ev.dataTransfer.getData('text/plain'),10); const to = parseInt(row.getAttribute('data-index'),10); if (!isNaN(from) && !isNaN(to) && from!==to) { const it = headersConfig.splice(from,1)[0]; headersConfig.splice(to,0,it); renderHeadersSettingsUI(); renderSelectedTable(); } } catch(e){console.error(e);} });
+
+  return row;
+  }
+
+  function renderHeadersSettingsUI() {
+  if (!headersConfig || !headersConfig.length) loadHeadersPreset();
+  const list = document.getElementById('header-list');
+  if (!list) return;
+  list.innerHTML = '';
+  headersConfig.forEach((h, idx) => {
+    const row = createHeaderRowConfig(h, idx);
+    row.setAttribute('data-index', idx);
+    if (h.fixed) { row.style.background = '#fbfbfb'; const btn = row.querySelector('button[title="Hapus"]'); if (btn) btn.disabled = true; }
+    list.appendChild(row);
+  });
+  }
+
+  // wire add/save/reset
+  document.getElementById('btn-add-header').addEventListener('click', ()=>{
+  let i = 1; let key;
+  do { key = `custom_${Date.now().toString().slice(-4)}_${i++}`; } while (headersConfig.find(h=>h.key===key));
+  headersConfig.push({ key, label: 'Kolom Baru', type: 'text', fixed: false });
+  renderHeadersSettingsUI(); renderSelectedTable();
+  });
+  document.getElementById('btn-save-header').addEventListener('click', saveHeadersPreset);
+  document.getElementById('btn-reset-header').addEventListener('click', ()=>{ if (!confirm('Reset format header ke default?')) return; resetHeadersPreset(); });
 
   // offline controls + progress UI
   const progressWrap = el('div', { class: 'progress-wrap', style: { display: 'none' } }, el('div', { class: 'odoo-small' }, 'Progres Import JSON:'), el('div', { class: 'progress-bar' }, el('div', { class: 'bar' })));
@@ -390,7 +471,7 @@ function selectiveCleanup(options = {}) {
     }
 
     if (options.injectedFlag) {
-      try { delete window.__odoo_tool_injected_v1_7; } catch(e){ window.__odoo_tool_injected_v1_7 = false; }
+      try { delete window.__odoo_tool_injected_v1_8; } catch(e){ window.__odoo_tool_injected_v1_8 = false; }
     }
 
     if (options.indexedDB) {
@@ -471,6 +552,172 @@ function selectiveCleanup(options = {}) {
   // state
   let availableFields = {};
   let chosenFields = ['default_code', 'name'];
+  // --------- Header configuration (dynamic columns) -------------
+  const PRESET_HEADER_KEY = 'odoo_helper_headers_v1';
+
+  let headersConfig = []; // array of { key, label, type, fixed } in order
+
+  function makeDefaultHeaders() {
+  // kolom bawaan yang selalu ada (fixed)
+  const fixedDefaults = [
+    { key: 'id', label: 'Id', type: 'number', fixed: true },
+    { key: 'default_code', label: 'Default Code', type: 'text', fixed: true },
+    { key: 'name', label: 'Nama', type: 'text', fixed: true }
+  ];
+
+  // kolom tail default yang selalu ingin kita kembalikan pada "Reset"
+  const tailDefaults = [
+    { key: 'qty', label: 'Qty', type: 'number', fixed: false },
+    { key: 'keterangan', label: 'Keterangan', type: 'text', fixed: false }
+  ];
+
+  // pastikan chosenFields adalah array -> normalisasi menjadi array kunci (string)
+  const chosenArr = Array.isArray(chosenFields) ? chosenFields : [];
+  const chosenKeys = chosenArr
+    .map(item => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object' && item.key) return String(item.key);
+      return null;
+    })
+    .filter(Boolean); // hilangkan null/undefined/''
+
+  // filter agar tidak memasukkan key yang sudah ada di fixedDefaults atau tailDefaults
+  const reserved = new Set([...fixedDefaults.map(h => h.key), ...tailDefaults.map(h => h.key)]);
+  const filteredChosenKeys = chosenKeys.filter(k => !reserved.has(k));
+
+  // bangun objek header untuk chosen fields (ambil label dari availableFields jika ada)
+  const chosenCols = filteredChosenKeys.map(k => {
+    const meta = (typeof availableFields !== 'undefined' && availableFields && availableFields[k]) ? availableFields[k] : null;
+    const labelFromMeta = meta ? (meta.string || meta.label || null) : null;
+    return {
+      key: k,
+      label: labelFromMeta || k,
+      type: meta && meta.type ? meta.type : 'text',
+      fixed: false
+    };
+  });
+
+  // gabungkan fixedDefaults + chosenCols + tailDefaults, pastikan tidak ada duplikat (safety)
+  const result = [];
+  const seen = new Set();
+  [...fixedDefaults, ...chosenCols, ...tailDefaults].forEach(h => {
+    if (!h || !h.key) return;
+    if (!seen.has(h.key)) {
+      result.push(h);
+      seen.add(h.key);
+    }
+  });
+
+  return result;
+  }
+
+  function normalizeHeadersArray(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(item => {
+    // jika saved item hanya string (format lama), ubah jadi object
+    if (typeof item === 'string') {
+      const key = item;
+      return { key, label: (availableFields && availableFields[key]?.string) || key, type: 'text', fixed: false };
+    }
+    // jika object, pastikan minimal memiliki key+label+type+fixed
+    if (item && typeof item === 'object') {
+      const key = item.key || String(item);
+      const label = (item.label === undefined || item.label === null || item.label === '') ?
+        ((availableFields && availableFields[key]?.string) || key) :
+        item.label;
+      return {
+        key,
+        label,
+        type: item.type || 'text',
+        fixed: !!item.fixed
+      };
+    }
+    return null;
+  }).filter(Boolean);
+}
+
+  function loadHeadersPreset() {
+  try {
+    const raw = localStorage.getItem(PRESET_HEADER_KEY);
+    if (raw) {
+      let arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) {
+        arr = normalizeHeadersArray(arr);
+
+        // pastikan fixed defaults di depan
+        const fixedDefaults = [
+          { key: 'id', label: 'Id', type: 'number', fixed: true },
+          { key: 'default_code', label: 'Default Code', type: 'text', fixed: true },
+          { key: 'name', label: 'Nama', type: 'text', fixed: true }
+        ];
+
+        // sisakan item lain tanpa duplikat fixedDefaults
+        const rest = arr.filter(h => !fixedDefaults.find(fd => fd.key === h.key));
+
+        headersConfig = [...fixedDefaults, ...rest];
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('loadHeadersPreset parse failed', e);
+  }
+  // fallback normal
+  headersConfig = makeDefaultHeaders();
+  }
+
+  function saveHeadersPreset() {
+  try {
+    // pastikan selalu tersimpan dalam format normal
+    const arr = normalizeHeadersArray(headersConfig);
+    localStorage.setItem(PRESET_HEADER_KEY, JSON.stringify(arr));
+  } catch (e) {
+    console.warn('saveHeadersPreset failed', e);
+  }
+  }
+
+  function resetHeadersPreset() {
+  try { localStorage.removeItem(PRESET_HEADER_KEY); } catch(e){}
+  headersConfig = makeDefaultHeaders();
+  if (typeof renderHeadersSettingsUI === 'function') renderHeadersSettingsUI();
+  if (typeof renderSelectedTable === 'function') renderSelectedTable();
+  }
+
+  // sync chosenFields -> headersConfig (keperluan saat user ubah chosenFields)
+  function syncChosenFieldsIntoHeaders() {
+  // pastikan kita mulai dari preset/konfigurasi header saat ini
+  loadHeadersPreset(); // ensure we have base
+
+  // ambil kolom fixed (id, default_code, name, dll.)
+  const fixed = headersConfig.filter(h => h.fixed);
+
+  // ambil tail (kolom khusus seperti qty/keterangan) agar tetap di akhir jika ada
+  const tail = headersConfig.filter(h => ['qty','keterangan'].includes(h.key));
+
+  // buat set kunci fixed untuk filter
+  const fixedKeys = new Set(fixed.map(h => h.key));
+
+  // normalisasi chosenFields -> array kunci string (handles both string and object items)
+  const chosenArr = Array.isArray(chosenFields) ? chosenFields : [];
+  const chosenKeys = chosenArr
+    .map(item => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object' && item.key) return String(item.key);
+      return null;
+    })
+    .filter(Boolean);
+
+  // filter out keys that are already fixed, to avoid duplicates
+  const filteredChosenKeys = chosenKeys.filter(k => !fixedKeys.has(k));
+
+  // bangun chosenCols dari filteredChosenKeys (reuse existing metadata if present)
+  const chosenCols = filteredChosenKeys.map(f => {
+    const existing = headersConfig.find(h => h.key === f);
+    return existing ? Object.assign({}, existing) : { key: f, label: (availableFields && availableFields[f]?.string) || f, type: 'text', fixed: false };
+  });
+
+  // gabungkan: fixed + chosenCols + tail
+  headersConfig = [...fixed, ...chosenCols, ...tail];
+  }
   let suggestions = [];
   let selected = [];
   let activeIndex = -1;
@@ -490,19 +737,32 @@ function selectiveCleanup(options = {}) {
     if (saved) { const arr = JSON.parse(saved); if (Array.isArray(arr) && arr.length) chosenFields = arr; }
     const minSaved = localStorage.getItem(MIN_KEY); if (minSaved === '1') { root.classList.add('minimized'); btnMin.textContent = '▢'; root.style.width = '260px'; root.style.height = 'auto'; }
   } catch (e) { /* ignore */ }
+  
+  // initialize headers UI only after chosenFields is defined
+  try {
+  loadHeadersPreset();
+  renderHeadersSettingsUI();
+  } catch (e) {
+  console.error('init header manager failed', e);
+  }
 
   // render field checkboxes
   function renderFieldCheckboxes() {
-    const box = document.getElementById('fields-checkboxes'); if (!box) return; box.innerHTML = '';
-    Object.keys(availableFields || {}).sort((a,b)=>( (availableFields[a]?.string||a).localeCompare(availableFields[b]?.string||b) ))
-      .forEach(fn=>{
-        const label = availableFields[fn]?.string || fn;
-        const cb = el('div', {}, el('label', {}, el('input', { type: 'checkbox', checked: chosenFields.includes(fn), onchange: (e) => {
-          if (e.target.checked) { if (!chosenFields.includes(fn)) chosenFields.push(fn); } else { chosenFields = chosenFields.filter(x => x !== fn); }
-          renderSuggestions(); renderSelectedTable();
-        } }), ' ', `${label} (${fn})`));
-        box.appendChild(cb);
-      });
+  const box = document.getElementById('fields-checkboxes'); if (!box) return; box.innerHTML = '';
+  Object.keys(availableFields || {}).sort((a,b)=>( (availableFields[a]?.string||a).localeCompare(availableFields[b]?.string||b) ))
+    .forEach(fn=>{
+      const label = availableFields[fn]?.string || fn;
+      const cbWrap = el('div', {}, el('label', {}, el('input', { type: 'checkbox', checked: chosenFields.includes(fn), onchange: (e) => {
+        if (e.target.checked) { if (!chosenFields.includes(fn)) chosenFields.push(fn); } else { chosenFields = chosenFields.filter(x => x !== fn); }
+        // sync chosenFields to headers config and render all UI
+        try { syncChosenFieldsIntoHeaders(); } catch(e){}
+        renderFieldCheckboxes();
+        renderSuggestions();
+        renderHeadersSettingsUI();
+        renderSelectedTable();
+      } }), ' ', `${label} (${fn})`));
+      box.appendChild(cbWrap);
+    });
   }
 
   function savePreset() { try { localStorage.setItem(PRESET_KEY, JSON.stringify(chosenFields)); alert('Preset fields disimpan'); } catch (e) { console.error(e); alert('Gagal menyimpan preset'); } }
@@ -630,19 +890,62 @@ function selectiveCleanup(options = {}) {
   }
 
   function renderSelectedTable() {
-    tbody.innerHTML = '';
-    selected.forEach((s, idx) => {
-      const rec = s.record;
-      const qtyInput = el('input', { type: 'number', value: s.qty, style: { width: '72px' } });
-      qtyInput.addEventListener('change', (e)=>{ s.qty = e.target.value; });
-      qtyInput.addEventListener('keydown', (e)=>{ if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); const noteEl = tbody.querySelector(`[data-id="${rec.id}"] input[data-role="note"]`); if (noteEl) noteEl.focus(); else searchInput.focus(); } else if (e.key === 'Enter') { e.preventDefault(); const noteEl = tbody.querySelector(`[data-id="${rec.id}"] input[data-role="note"]`); if (noteEl) noteEl.focus(); } });
-      const noteInput = el('input', { type: 'text', value: s.note, style: { width: '120px' }, 'data-role': 'note' });
-      noteInput.addEventListener('change', (e)=>{ s.note = e.target.value; });
-      noteInput.addEventListener('keydown', (e)=>{ if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); searchInput.focus(); } else if (e.key === 'Enter') { e.preventDefault(); searchInput.focus(); } });
-      const otherFields = chosenFields.filter(f=>!['default_code','name'].includes(f)).map(f=>{ const v = rec[f]; if (v == null) return ''; if (Array.isArray(v)) return `${availableFields[f]?.string || f}: ${v[1]}`; return `${availableFields[f]?.string || f}: ${v}`; }).join(' • ');
-      const tr = el('tr', { 'data-id': rec.id }, el('td', {}, String(idx+1)), el('td', {}, rec.default_code ? `[${rec.default_code}] ${rec.name || ''}` : (rec.name || `#${rec.id}`)), el('td', {}, otherFields), el('td', {}, qtyInput), el('td', {}, noteInput), el('td', {}, el('button', { class: 'odoo-btn', onclick: ()=>{ selected = selected.filter(x=>x.record.id!==rec.id); renderSelectedTable(); } }, 'Hapus')) );
-      tbody.appendChild(tr);
+  // ensure headers exist
+  if (!headersConfig || !headersConfig.length) loadHeadersPreset();
+
+  // render thead dynamically
+  const theadEl = table.querySelector('thead');
+  const newThead = el('thead');
+  const trHead = el('tr');
+  trHead.appendChild(el('th', {}, '#'));
+  headersConfig.forEach(h => { trHead.appendChild(el('th', {}, h.label || h.key)); });
+  trHead.appendChild(el('th', {}, 'Aksi'));
+  newThead.appendChild(trHead);
+  if (theadEl && theadEl.parentNode) { theadEl.parentNode.replaceChild(newThead, theadEl); } else { table.insertBefore(newThead, table.firstChild); }
+
+  tbody.innerHTML = '';
+  selected.forEach((s, idx) => {
+    const rec = s.record;
+    s.values = s.values || {}; // store custom values per row
+    const tr = el('tr', { 'data-id': rec.id });
+    tr.appendChild(el('td', {}, String(idx+1)));
+
+    headersConfig.forEach(h => {
+      const td = el('td');
+      if (h.key === 'id') {
+        td.appendChild(document.createTextNode(String(rec.id)));
+      } else if (h.key === 'qty') {
+        const qtyInput = el('input', { type: 'number', value: s.qty || '', style: { width: '72px' } });
+        qtyInput.addEventListener('change', (e)=>{ s.qty = e.target.value; });
+        td.appendChild(qtyInput);
+      } else if (h.key === 'keterangan') {
+        const noteInput = el('input', { type: 'text', value: s.note || '', 'data-role': 'note', style: { width: '120px' } });
+        noteInput.addEventListener('change', (e)=>{ s.note = e.target.value; });
+        td.appendChild(noteInput);
+      } else if (rec.hasOwnProperty(h.key)) {
+        const v = rec[h.key];
+        const text = Array.isArray(v) ? (v[1] || '') : (v == null ? '' : String(v));
+        td.appendChild(document.createTextNode(text));
+      } else {
+        // custom user column -> input
+        const val = s.values[h.key] || '';
+        if (h.type === 'number') {
+          const inp = el('input', { type: 'number', value: val, style: { width: '100px' } });
+          inp.addEventListener('change', (e)=>{ s.values[h.key] = e.target.value; });
+          td.appendChild(inp);
+        } else {
+          const inp = el('input', { type: 'text', value: val, style: { width: '120px' } });
+          inp.addEventListener('change', (e)=>{ s.values[h.key] = e.target.value; });
+          td.appendChild(inp);
+        }
+      }
+      tr.appendChild(td);
     });
+
+    const aksiTd = el('td', {}, el('button', { class: 'odoo-btn', onclick: ()=>{ selected = selected.filter(x=>x.record.id!==rec.id); renderSelectedTable(); } }, 'Hapus'));
+    tr.appendChild(aksiTd);
+    tbody.appendChild(tr);
+  });
   }
 
   function scrollSelectedToBottom() {
@@ -654,43 +957,55 @@ function selectiveCleanup(options = {}) {
 
   // actions: downloadCSV / copyClipboard / clearAll
   function downloadCSV() {
-    if (!selected.length) return alert('Daftar kosong');
-    const headers = ['id', ...chosenFields, 'qty', 'keterangan'];
-    const rows = [headers.join(',')];
-    selected.forEach(s=>{
-      const rec = s.record;
-      const line = headers.map(h=>{
-        if (h === 'id') return rec.id;
-        if (h === 'qty') return s.qty || '';
-        if (h === 'keterangan') return (s.note||'');
-        const v = rec[h];
+  if (!selected.length) return alert('Daftar kosong');
+  if (!headersConfig || !headersConfig.length) loadHeadersPreset();
+  const headersLabel = headersConfig.map(h => h.label || h.key);
+  const rows = [headersLabel.map(csvEscape).join(',')];
+
+  selected.forEach(s=>{
+    const rec = s.record;
+    const lineVals = headersConfig.map(h => {
+      if (h.key === 'id') return rec.id;
+      if (h.key === 'qty') return s.qty || '';
+      if (h.key === 'keterangan') return s.note || '';
+      if (rec.hasOwnProperty(h.key)) {
+        const v = rec[h.key];
         if (Array.isArray(v)) return v[1] || '';
         return (v == null) ? '' : String(v);
-      }).map(csvEscape).join(',');
-      rows.push(line);
-    });
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `odoo_selected_${(new Date()).toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      }
+      return (s.values && s.values[h.key]) ? s.values[h.key] : '';
+    }).map(csvEscape).join(',');
+    rows.push(lineVals);
+  });
+
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `odoo_selected_${(new Date()).toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
 
   function copyClipboard() {
-    if (!selected.length) return alert('Daftar kosong');
-    const headers = ['id', ...chosenFields, 'qty', 'keterangan'];
-    const lines = [headers.join('\t')];
-    selected.forEach(s=>{
-      const rec = s.record;
-      const line = headers.map(h=>{
-        if (h === 'id') return rec.id;
-        if (h === 'qty') return s.qty || '';
-        if (h === 'keterangan') return s.note || '';
-        const v = rec[h];
+  if (!selected.length) return alert('Daftar kosong');
+  if (!headersConfig || !headersConfig.length) loadHeadersPreset();
+  const headersLabel = headersConfig.map(h => h.label || h.key);
+  const lines = [ headersLabel.join('\t') ];
+
+  selected.forEach(s=>{
+    const rec = s.record;
+    const line = headersConfig.map(h=>{
+      if (h.key === 'id') return rec.id;
+      if (h.key === 'qty') return s.qty || '';
+      if (h.key === 'keterangan') return s.note || '';
+      if (rec.hasOwnProperty(h.key)) {
+        const v = rec[h.key];
         if (Array.isArray(v)) return v[1] || '';
         return (v == null) ? '' : String(v);
-      }).join('\t');
-      lines.push(line);
-    });
-    navigator.clipboard.writeText(lines.join('\n')).then(()=>alert('Disalin ke clipboard. Paste di Excel.'), (err)=>{ console.error(err); alert('Gagal copy clipboard'); });
+      }
+      return (s.values && s.values[h.key]) ? s.values[h.key] : '';
+    }).join('\t');
+    lines.push(line);
+  });
+
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>alert('Disalin ke clipboard. Paste di Excel.'), (err)=>{ console.error(err); alert('Gagal copy clipboard'); });
   }
 
   function clearAll() { if (!confirm('Hapus semua produk terpilih?')) return; selected = []; renderSelectedTable(); }
@@ -1192,7 +1507,7 @@ function selectiveCleanup(options = {}) {
   // JSON load helper: expose minimal API
   window.OdooProductHelper = { addSelected, doSearch, getSuggestions: () => suggestions, getSelected: () => selected, setChosenFields: (arr) => { if (Array.isArray(arr)) { chosenFields = arr; renderFieldCheckboxes(); renderSuggestions(); renderSelectedTable(); } }, openDB, saveProductsBatch, getProductsCount, rebuildWorkerFromDB };
 
-  console.log('Odoo Helper injected (v1.7) - tokens index + worker search + settings UI added.');
+  console.log('Odoo Helper injected (v1.8) - tokens index + worker search + settings UI added.');
 
   // -----------------------
   // CLEANUP: remove DOM, listeners, worker, global variables
@@ -1251,7 +1566,7 @@ function selectiveCleanup(options = {}) {
       try { delete window.OdooProductHelper; } catch(e){ window.OdooProductHelper = undefined; }
 
       // remove injected flag
-      try { delete window.__odoo_tool_injected_v1_7; } catch(e){ window.__odoo_tool_injected_v1_7 = false; }
+      try { delete window.__odoo_tool_injected_v1_8; } catch(e){ window.__odoo_tool_injected_v1_8 = false; }
 
       console.log('Odoo Helper: cleaned up and removed.');
     } catch (err) {
