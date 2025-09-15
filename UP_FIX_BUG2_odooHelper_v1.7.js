@@ -564,38 +564,42 @@ function selectiveCleanup(options = {}) {
     { key: 'name', label: 'Nama', type: 'text', fixed: true }
   ];
 
+  // kolom tail default yang selalu ingin kita kembalikan pada "Reset"
+  const tailDefaults = [
+    { key: 'qty', label: 'Qty', type: 'number', fixed: false },
+    { key: 'keterangan', label: 'Keterangan', type: 'text', fixed: false }
+  ];
+
   // pastikan chosenFields adalah array -> normalisasi menjadi array kunci (string)
   const chosenArr = Array.isArray(chosenFields) ? chosenFields : [];
   const chosenKeys = chosenArr
     .map(item => {
       if (typeof item === 'string') return item;
       if (item && typeof item === 'object' && item.key) return String(item.key);
-      // defensif: ignore non-string / non-object entries by returning null
       return null;
     })
     .filter(Boolean); // hilangkan null/undefined/''
 
-  // filter agar tidak memasukkan key yang sudah ada di fixedDefaults
-  const fixedKeys = new Set(fixedDefaults.map(h => h.key));
-  const filteredChosenKeys = chosenKeys.filter(k => !fixedKeys.has(k));
+  // filter agar tidak memasukkan key yang sudah ada di fixedDefaults atau tailDefaults
+  const reserved = new Set([...fixedDefaults.map(h => h.key), ...tailDefaults.map(h => h.key)]);
+  const filteredChosenKeys = chosenKeys.filter(k => !reserved.has(k));
 
   // bangun objek header untuk chosen fields (ambil label dari availableFields jika ada)
   const chosenCols = filteredChosenKeys.map(k => {
-    const labelFromMeta = (typeof availableFields !== 'undefined' && availableFields && availableFields[k] && (availableFields[k].string || availableFields[k].label))
-      ? (availableFields[k].string || availableFields[k].label)
-      : null;
+    const meta = (typeof availableFields !== 'undefined' && availableFields && availableFields[k]) ? availableFields[k] : null;
+    const labelFromMeta = meta ? (meta.string || meta.label || null) : null;
     return {
       key: k,
       label: labelFromMeta || k,
-      type: (typeof availableFields !== 'undefined' && availableFields && availableFields[k] && availableFields[k].type) ? availableFields[k].type : 'text',
+      type: meta && meta.type ? meta.type : 'text',
       fixed: false
     };
   });
 
-  // gabungkan fixedDefaults + chosenCols, pastikan tidak ada duplikat (tambahan safety)
+  // gabungkan fixedDefaults + chosenCols + tailDefaults, pastikan tidak ada duplikat (safety)
   const result = [];
   const seen = new Set();
-  [...fixedDefaults, ...chosenCols].forEach(h => {
+  [...fixedDefaults, ...chosenCols, ...tailDefaults].forEach(h => {
     if (!h || !h.key) return;
     if (!seen.has(h.key)) {
       result.push(h);
