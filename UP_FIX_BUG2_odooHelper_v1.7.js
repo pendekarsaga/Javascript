@@ -679,13 +679,38 @@ function selectiveCleanup(options = {}) {
 
   // sync chosenFields -> headersConfig (keperluan saat user ubah chosenFields)
   function syncChosenFieldsIntoHeaders() {
+  // pastikan kita mulai dari preset/konfigurasi header saat ini
   loadHeadersPreset(); // ensure we have base
+
+  // ambil kolom fixed (id, default_code, name, dll.)
   const fixed = headersConfig.filter(h => h.fixed);
+
+  // ambil tail (kolom khusus seperti qty/keterangan) agar tetap di akhir jika ada
   const tail = headersConfig.filter(h => ['qty','keterangan'].includes(h.key));
-  const chosenCols = chosenFields.map(f => {
+
+  // buat set kunci fixed untuk filter
+  const fixedKeys = new Set(fixed.map(h => h.key));
+
+  // normalisasi chosenFields -> array kunci string (handles both string and object items)
+  const chosenArr = Array.isArray(chosenFields) ? chosenFields : [];
+  const chosenKeys = chosenArr
+    .map(item => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object' && item.key) return String(item.key);
+      return null;
+    })
+    .filter(Boolean);
+
+  // filter out keys that are already fixed, to avoid duplicates
+  const filteredChosenKeys = chosenKeys.filter(k => !fixedKeys.has(k));
+
+  // bangun chosenCols dari filteredChosenKeys (reuse existing metadata if present)
+  const chosenCols = filteredChosenKeys.map(f => {
     const existing = headersConfig.find(h => h.key === f);
-    return existing ? Object.assign({}, existing) : { key: f, label: (availableFields[f]?.string || f), type: 'text', fixed: false };
+    return existing ? Object.assign({}, existing) : { key: f, label: (availableFields && availableFields[f]?.string) || f, type: 'text', fixed: false };
   });
+
+  // gabungkan: fixed + chosenCols + tail
   headersConfig = [...fixed, ...chosenCols, ...tail];
   }
   let suggestions = [];
